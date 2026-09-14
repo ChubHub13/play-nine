@@ -1,4 +1,4 @@
-# Three-Handed Play Nine v1.2.0
+# Three-Handed Play Nine v1.3.0
 
 A browser-based, three-seat Play Nine table for Daryl, Cristi, and Cindy. One or more people can join; unclaimed or disconnected seats are played by bots.
 

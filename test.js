@@ -41,6 +41,12 @@ async function run() {
   assert.equal(game.scoreBoard(board([3, 3, 3, 3, 3, 3, 3, 3])).score, -20, 'Four equal pair-columns earn -20.');
   assert.equal(game.scoreBoard(board([-5, 1, 2, 3, -5, 4, 5, 6])).score, 11, 'A Hole-in-One pair retains both -5 values.');
   assert.equal(game.scoreBoard(board([-5, -5, 2, 3, -5, -5, 5, 6])).score, -14, 'Four Hole-in-One cards total -30 before other cards.');
+  const leadingBot = board([0, 1, 2, 3, 4, 5, 6, 7]);
+  const trailingPlayer = board([5, 5, 5, 5, 6, 6, 6, 6]);
+  const closePlayer = board([4, 4, 4, 4, 5, 5, 5, 5]);
+  assert.equal(game.visibleBoardScore(leadingBot), 28);
+  assert.equal(game.botHasSafeLead([leadingBot, trailingPlayer, trailingPlayer], 0), true, 'Bot should finish when both visible opponents trail by at least ten.');
+  assert.equal(game.botHasSafeLead([leadingBot, trailingPlayer, closePlayer], 0), false, 'Bot should keep playing when either opponent is within ten visible points.');
 
   await new Promise((resolve, reject) => {
     game.server.once('error', reject);
@@ -122,7 +128,8 @@ async function run() {
         });
         if (action.action === 'skip') {
           testedFinalPuttSkip = true;
-          assert.equal(played.state.boards[0].filter(slot => !slot.faceUp).length, 1);
+          if (played.state.phase === 'playing') assert.equal(played.state.boards[0].filter(slot => !slot.faceUp).length, 1);
+          else assert.ok(['holeEnd', 'gameover'].includes(played.state.phase), 'A final-turn stand may immediately score the hole.');
         }
       }
       continue;

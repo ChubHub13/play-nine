@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 
 const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || '0.0.0.0';
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 const PLAYER_NAMES = ['Daryl', 'Cristi', 'Cindy'];
 const PLAYER_TIMEOUT_MS = Math.max(3000, Number(process.env.PLAYER_TIMEOUT_MS || 12000));
 const BOT_DELAY_MS = Math.max(20, Number(process.env.BOT_DELAY_MS || 650));
@@ -333,6 +333,26 @@ function botIsLate(seat) {
   return game.closer !== null || ownHidden <= 2 || closestOpponent <= 2;
 }
 
+function visibleBoardScore(board) {
+  let score = board.reduce((sum, slot) => sum + (slot.faceUp ? slot.card.value : 0), 0);
+  const matchedByValue = new Map();
+  for (let column = 0; column < 4; column++) {
+    const top = board[column];
+    const bottom = board[column + 4];
+    if (!top?.faceUp || !bottom?.faceUp || top.card.value !== bottom.card.value) continue;
+    const value = top.card.value;
+    matchedByValue.set(value, (matchedByValue.get(value) || 0) + 1);
+    if (value !== -5) score -= value * 2;
+  }
+  for (const count of matchedByValue.values()) if (count >= 2) score -= count * 5;
+  return score;
+}
+
+function botHasSafeLead(boards, seat) {
+  const botScore = visibleBoardScore(boards[seat]);
+  return boards.every((board, player) => player === seat || visibleBoardScore(board) >= botScore + 10);
+}
+
 function replacementTarget(seat, value, allowVisible = false) {
   const pair = pairTarget(seat, value);
   if (pair !== null) return pair;
@@ -353,13 +373,18 @@ function botDraw(seat) {
 
 function botPlay(seat) {
   if (game.phase !== 'playing' || game.turn !== seat || !game.bot[seat] || game.stage !== 'play' || !game.drawn) return;
+  const hidden = facedownIndexes(seat);
+  if (game.drawn.source === 'stock' && hidden.length === 1 && botHasSafeLead(game.boards, seat)) {
+    game.botSkips[seat] = 0;
+    discardAndFlip(seat, hidden[0]);
+    return;
+  }
   const target = replacementTarget(seat, game.drawn.card.value, botIsLate(seat));
   if (target !== null) {
     game.botSkips[seat] = 0;
     replaceCard(seat, target);
     return;
   }
-  const hidden = facedownIndexes(seat);
   if (game.drawn.source === 'stock' && hidden.length) {
     if (hidden.length === 1 && game.drawn.card.value > 3 && game.botSkips[seat] < 2) {
       game.botSkips[seat]++;
@@ -550,4 +575,4 @@ if (require.main === module) {
   server.listen(PORT, HOST, () => console.log(`Play Nine v${VERSION} running at http://${HOST}:${PORT}`));
 }
 
-module.exports = { buildDeck, scoreBoard, server };
+module.exports = { buildDeck, scoreBoard, visibleBoardScore, botHasSafeLead, server };
