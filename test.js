@@ -1,0 +1,150 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'play-nine-test-'));
+const historyFile = path.join(temporaryDirectory, 'score-history.json');
+fs.writeFileSync(historyFile, JSON.stringify([
+  { name: 'Daryl', score: -12, bot: false, playedAt: '2026-01-01T00:00:00.000Z' },
+  { name: 'Cristi', score: 18, bot: true, playedAt: '2026-01-02T00:00:00.000Z' },
+  { name: 'Cindy', score: 43, bot: false, playedAt: '2026-01-03T00:00:00.000Z' }
+]));
+process.env.SCORE_HISTORY_FILE = historyFile;
+process.env.BOT_DELAY_MS = '20';
+
+const game = require('./server');
+
+function board(values) {
+  return values.map((value, index) => ({ card: { id: String(index), value }, faceUp: true }));
+}
+
+async function request(baseUrl, pathname, options) {
+  const response = await fetch(`${baseUrl}${pathname}`, options);
+  const body = await response.json();
+  assert.equal(response.ok, true, body.message);
+  return body;
+}
+
+async function run() {
+  const deck = game.buildDeck();
+  assert.equal(deck.length, 108);
+  for (let value = 0; value <= 12; value++) assert.equal(deck.filter(card => card.value === value).length, 8);
+  assert.equal(deck.filter(card => card.value === -5).length, 4);
+
+  assert.deepEqual(game.scoreBoard(board([6, 7, 8, 9, 6, 0, 8, 12])), { score: 28, bonus: 0, matchedColumns: [0, 2] });
+  assert.equal(game.scoreBoard(board([7, 7, 1, 2, 7, 7, 3, 4])).score, 0, 'Two equal pair-columns cancel and earn -10.');
+  assert.equal(game.scoreBoard(board([11, 11, 11, 0, 11, 11, 11, 12])).score, -3, 'Three equal pair-columns earn -15.');
+  assert.equal(game.scoreBoard(board([3, 3, 3, 3, 3, 3, 3, 3])).score, -20, 'Four equal pair-columns earn -20.');
+  assert.equal(game.scoreBoard(board([-5, 1, 2, 3, -5, 4, 5, 6])).score, 11, 'A Hole-in-One pair retains both -5 values.');
+  assert.equal(game.scoreBoard(board([-5, -5, 2, 3, -5, -5, 5, 6])).score, -14, 'Four Hole-in-One cards total -30 before other cards.');
+
+  await new Promise((resolve, reject) => {
+    game.server.once('error', reject);
+    game.server.listen(0, '127.0.0.1', resolve);
+  });
+  const baseUrl = `http://127.0.0.1:${game.server.address().port}`;
+  const joined = await request(baseUrl, '/api/join', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Daryl' })
+  });
+  assert.deepEqual(joined.state.allTime.low.map(entry => entry.score), [-12, 18, 43]);
+  assert.equal(joined.state.allTime.high[0].score, 43);
+
+  const renamed = await request(baseUrl, '/api/action', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'rename', name: '  Guest   Golfer  ' })
+  });
+  assert.equal(renamed.state.seats[0].name, 'Guest Golfer');
+
+  let state = await request(baseUrl, '/api/action', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'start' })
+  });
+  assert.equal(state.state.phase, 'teeOff');
+  state = await request(baseUrl, '/api/action', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'teeOff', index: 0 })
+  });
+  state = await request(baseUrl, '/api/action', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'teeOff', index: 1 })
+  });
+  assert.equal(state.state.phase, 'playing');
+  assert.equal(state.state.turn, 0);
+  state = await request(baseUrl, '/api/action', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'draw', source: 'stock' })
+  });
+  assert.equal(state.state.stage, 'play');
+  state = await request(baseUrl, '/api/action', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'replace', index: 0 })
+  });
+  assert.equal(state.state.turn, 1);
+
+  let completedGame = null;
+  let testedFinalPuttSkip = false;
+  for (let step = 0; step < 3000; step++) {
+    const snapshot = (await request(baseUrl, `/api/state?token=${encodeURIComponent(joined.token)}`)).state;
+    if (snapshot.phase === 'gameover') {
+      completedGame = snapshot;
+      break;
+    }
+    if (snapshot.phase === 'holeEnd') {
+      await request(baseUrl, '/api/action', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'nextHole' })
+      });
+      continue;
+    }
+    if (snapshot.phase === 'teeOff' && snapshot.teeOffCounts[0] < 2) {
+      const target = snapshot.boards[0].find(slot => !slot.faceUp).index;
+      await request(baseUrl, '/api/action', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'teeOff', index: target })
+      });
+      continue;
+    }
+    if (snapshot.phase === 'playing' && snapshot.turn === 0) {
+      if (snapshot.stage === 'draw') {
+        await request(baseUrl, '/api/action', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'draw', source: 'stock' })
+        });
+      } else {
+        const hidden = snapshot.boards[0].find(slot => !slot.faceUp);
+        const hiddenCount = snapshot.boards[0].filter(slot => !slot.faceUp).length;
+        const action = hiddenCount === 1 && snapshot.drawn.source === 'stock' && !testedFinalPuttSkip
+          ? { action: 'skip' }
+          : hidden && snapshot.drawn.source === 'stock'
+            ? { action: 'discardFlip', index: hidden.index }
+            : { action: 'replace', index: 0 };
+        const played = await request(baseUrl, '/api/action', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, ...action })
+        });
+        if (action.action === 'skip') {
+          testedFinalPuttSkip = true;
+          assert.equal(played.state.boards[0].filter(slot => !slot.faceUp).length, 1);
+        }
+      }
+      continue;
+    }
+    await new Promise(resolve => setTimeout(resolve, 15));
+  }
+  assert.ok(completedGame, 'Automated live/bot play should finish all nine holes.');
+  assert.equal(completedGame.hole, 9);
+  assert.equal(completedGame.holeHistory.length, 9);
+  assert.equal(testedFinalPuttSkip, true);
+  assert.equal(completedGame.allTime.low.length, 5);
+  assert.equal(completedGame.allTime.low.some(entry => entry.bot), true);
+
+  const reset = await request(baseUrl, '/api/action', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'resetScores' })
+  });
+  assert.deepEqual(reset.state.allTime, { high: [], low: [] });
+  assert.deepEqual(JSON.parse(fs.readFileSync(historyFile, 'utf8')), []);
+}
+
+run()
+  .then(() => console.log('Play Nine tests passed.'))
+  .finally(() => {
+    game.server.close();
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  })
+  .catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });
