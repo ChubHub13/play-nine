@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 
 const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || '0.0.0.0';
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 const PLAYER_NAMES = ['Daryl', 'Cristi', 'Cindy'];
 const PLAYER_TIMEOUT_MS = Math.max(3000, Number(process.env.PLAYER_TIMEOUT_MS || 12000));
 const BOT_DELAY_MS = Math.max(20, Number(process.env.BOT_DELAY_MS || 650));
@@ -348,9 +348,13 @@ function visibleBoardScore(board) {
   return score;
 }
 
-function botHasSafeLead(boards, seat) {
-  const botScore = visibleBoardScore(boards[seat]);
-  return boards.every((board, player) => player === seat || visibleBoardScore(board) >= botScore + 10);
+function estimatedBoardScore(board) {
+  return visibleBoardScore(board) + board.filter(slot => !slot.faceUp).length * 5;
+}
+
+function botShouldGoOut(boards, seat) {
+  const botEstimate = estimatedBoardScore(boards[seat]);
+  return botEstimate < 5 || boards.every((board, player) => player === seat || estimatedBoardScore(board) >= botEstimate + 12);
 }
 
 function replacementTarget(seat, value, allowVisible = false) {
@@ -374,7 +378,7 @@ function botDraw(seat) {
 function botPlay(seat) {
   if (game.phase !== 'playing' || game.turn !== seat || !game.bot[seat] || game.stage !== 'play' || !game.drawn) return;
   const hidden = facedownIndexes(seat);
-  if (game.drawn.source === 'stock' && hidden.length === 1 && botHasSafeLead(game.boards, seat)) {
+  if (game.drawn.source === 'stock' && hidden.length === 1 && botShouldGoOut(game.boards, seat)) {
     game.botSkips[seat] = 0;
     discardAndFlip(seat, hidden[0]);
     return;
@@ -426,6 +430,7 @@ function publicState(seat) {
     turn: game.turn,
     stage: game.stage,
     totals: game.totals,
+    handScores: game.boards.map(visibleBoardScore),
     boards: game.boards.map(board => board.map((slot, index) => ({ index, faceUp: slot.faceUp, value: slot.faceUp ? slot.card.value : null }))),
     stockCount: game.stock.length,
     discardTop: game.discard.at(-1) || null,
@@ -575,4 +580,4 @@ if (require.main === module) {
   server.listen(PORT, HOST, () => console.log(`Play Nine v${VERSION} running at http://${HOST}:${PORT}`));
 }
 
-module.exports = { buildDeck, scoreBoard, visibleBoardScore, botHasSafeLead, server };
+module.exports = { buildDeck, scoreBoard, visibleBoardScore, estimatedBoardScore, botShouldGoOut, server };

@@ -45,8 +45,15 @@ async function run() {
   const trailingPlayer = board([5, 5, 5, 5, 6, 6, 6, 6]);
   const closePlayer = board([4, 4, 4, 4, 5, 5, 5, 5]);
   assert.equal(game.visibleBoardScore(leadingBot), 28);
-  assert.equal(game.botHasSafeLead([leadingBot, trailingPlayer, trailingPlayer], 0), true, 'Bot should finish when both visible opponents trail by at least ten.');
-  assert.equal(game.botHasSafeLead([leadingBot, trailingPlayer, closePlayer], 0), false, 'Bot should keep playing when either opponent is within ten visible points.');
+  assert.equal(game.estimatedBoardScore(leadingBot), 28);
+  assert.equal(game.botShouldGoOut([leadingBot, trailingPlayer, trailingPlayer], 0), true, 'Bot should finish when both estimated opponents trail by at least twelve.');
+  assert.equal(game.botShouldGoOut([leadingBot, trailingPlayer, closePlayer], 0), false, 'Bot should keep playing when either estimated opponent is within twelve points.');
+  const excellentBot = board([-5, 0, 1, 1, -5, 0, 1, 1]);
+  assert.equal(game.botShouldGoOut([excellentBot, closePlayer, closePlayer], 0), true, 'Bot should finish with an estimated round score below five.');
+  const estimatedHand = board([0, 1, 2, 3, 4, 5, 6, 7]);
+  estimatedHand[6].faceUp = false;
+  estimatedHand[7].faceUp = false;
+  assert.equal(game.estimatedBoardScore(estimatedHand), 25, 'Each facedown card should be estimated at five points.');
 
   await new Promise((resolve, reject) => {
     game.server.once('error', reject);
