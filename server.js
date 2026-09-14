@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 
 const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || '0.0.0.0';
-const VERSION = '1.0.0';
+const VERSION = '1.2.0';
 const PLAYER_NAMES = ['Daryl', 'Cristi', 'Cindy'];
 const PLAYER_TIMEOUT_MS = Math.max(3000, Number(process.env.PLAYER_TIMEOUT_MS || 12000));
 const BOT_DELAY_MS = Math.max(20, Number(process.env.BOT_DELAY_MS || 650));
@@ -309,7 +309,7 @@ function scoreHole() {
   }
 }
 
-function replacementTarget(seat, value) {
+function pairTarget(seat, value) {
   const board = game.boards[seat];
   for (let column = 0; column < 4; column++) {
     const top = board[column];
@@ -317,17 +317,35 @@ function replacementTarget(seat, value) {
     if (top.faceUp && top.card.value === value && (!bottom.faceUp || bottom.card.value !== value)) return column + 4;
     if (bottom.faceUp && bottom.card.value === value && (!top.faceUp || top.card.value !== value)) return column;
   }
+  return null;
+}
+
+function visibleUpgradeTarget(seat, value) {
+  const board = game.boards[seat];
   const visible = board.map((slot, index) => ({ slot, index })).filter(item => item.slot.faceUp).sort((a, b) => b.slot.card.value - a.slot.card.value);
   if (visible[0]?.slot.card.value > value) return visible[0].index;
+  return null;
+}
+
+function botIsLate(seat) {
+  const ownHidden = facedownIndexes(seat).length;
+  const closestOpponent = Math.min(...game.boards.map((board, player) => player === seat ? 8 : board.filter(slot => !slot.faceUp).length));
+  return game.closer !== null || ownHidden <= 2 || closestOpponent <= 2;
+}
+
+function replacementTarget(seat, value, allowVisible = false) {
+  const pair = pairTarget(seat, value);
+  if (pair !== null) return pair;
   const hidden = facedownIndexes(seat);
   if (hidden.length && value <= 4) return hidden[crypto.randomInt(hidden.length)];
+  if (allowVisible) return visibleUpgradeTarget(seat, value);
   return null;
 }
 
 function botDraw(seat) {
   if (game.phase !== 'playing' || game.turn !== seat || !game.bot[seat] || game.stage !== 'draw') return;
   const discard = game.discard.at(-1);
-  const discardTarget = discard ? replacementTarget(seat, discard.value) : null;
+  const discardTarget = discard ? replacementTarget(seat, discard.value, botIsLate(seat)) : null;
   drawCard(seat, discardTarget !== null ? 'discard' : 'stock');
   botTimer = setTimeout(() => botPlay(seat), Math.max(20, BOT_DELAY_MS * 0.65));
   botTimer.unref?.();
@@ -335,7 +353,7 @@ function botDraw(seat) {
 
 function botPlay(seat) {
   if (game.phase !== 'playing' || game.turn !== seat || !game.bot[seat] || game.stage !== 'play' || !game.drawn) return;
-  const target = replacementTarget(seat, game.drawn.card.value);
+  const target = replacementTarget(seat, game.drawn.card.value, botIsLate(seat));
   if (target !== null) {
     game.botSkips[seat] = 0;
     replaceCard(seat, target);
@@ -516,10 +534,12 @@ const server = http.createServer(async (request, response) => {
 
 setInterval(() => {
   const now = Date.now();
-  for (let seat = 0; seat < 3; seat++) {
-    if (game.live[seat] && now - game.lastSeen[seat] > PLAYER_TIMEOUT_MS) {
-      game.live[seat] = false;
-      game.bot[seat] = true;
+  if (game.phase === 'waiting' || game.phase === 'gameover') {
+    for (let seat = 0; seat < 3; seat++) {
+      if (game.live[seat] && now - game.lastSeen[seat] > PLAYER_TIMEOUT_MS) {
+        game.live[seat] = false;
+        game.bot[seat] = true;
+      }
     }
   }
   if (game.phase === 'teeOff') autoTeeOffBots();

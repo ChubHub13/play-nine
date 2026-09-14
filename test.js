@@ -14,6 +14,7 @@ fs.writeFileSync(historyFile, JSON.stringify([
 ]));
 process.env.SCORE_HISTORY_FILE = historyFile;
 process.env.BOT_DELAY_MS = '20';
+process.env.PLAYER_TIMEOUT_MS = '3000';
 
 const game = require('./server');
 
@@ -69,6 +70,10 @@ async function run() {
   });
   assert.equal(state.state.phase, 'playing');
   assert.equal(state.state.turn, 0);
+  await new Promise(resolve => setTimeout(resolve, 6500));
+  state = await request(baseUrl, `/api/state?token=${encodeURIComponent(joined.token)}`);
+  assert.equal(state.state.turn, 0, 'An inactive live player turn must remain paused.');
+  assert.equal(state.state.boards[0].filter(slot => slot.faceUp).length, 2, 'The server must not play an inactive live player\'s cards.');
   state = await request(baseUrl, '/api/action', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'draw', source: 'stock' })
   });
