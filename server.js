@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 
 const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || '0.0.0.0';
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 const PLAYER_NAMES = ['Daryl', 'Cristi', 'Cindy'];
 const PLAYER_TIMEOUT_MS = Math.max(3000, Number(process.env.PLAYER_TIMEOUT_MS || 12000));
 const BOT_DELAY_MS = Math.max(20, Number(process.env.BOT_DELAY_MS || 650));
@@ -15,40 +15,9 @@ const FINAL_HOLE = 9;
 const sessions = new Map();
 let botTimer = null;
 
-const SCORE_HISTORY_FILE = process.env.SCORE_HISTORY_FILE || path.join(__dirname, 'score-history.json');
-
 function cleanDisplayName(value) {
   const name = String(value || '').replace(/\s+/g, ' ').trim().slice(0, 20);
   return name || null;
-}
-
-function loadScoreHistory() {
-  try {
-    const entries = JSON.parse(fs.readFileSync(SCORE_HISTORY_FILE, 'utf8'));
-    return Array.isArray(entries) ? entries
-      .map(entry => ({ ...entry, name: cleanDisplayName(entry?.name), bot: Boolean(entry?.bot) }))
-      .filter(entry => entry.name && Number.isFinite(entry.score)) : [];
-  } catch {
-    return [];
-  }
-}
-
-let scoreHistory = loadScoreHistory();
-
-function saveScoreHistory() {
-  try {
-    fs.writeFileSync(SCORE_HISTORY_FILE, `${JSON.stringify(scoreHistory, null, 2)}\n`);
-  } catch (error) {
-    console.error('Could not save Play Nine score history:', error.message);
-  }
-}
-
-function allTimeScores(direction) {
-  const multiplier = direction === 'high' ? -1 : 1;
-  return [...scoreHistory]
-    .sort((a, b) => multiplier * (a.score - b.score) || String(a.playedAt).localeCompare(String(b.playedAt)))
-    .slice(0, 5)
-    .map(({ name, score, bot }) => ({ name, score, bot }));
 }
 
 function buildDeck() {
@@ -299,10 +268,6 @@ function scoreHole() {
     game.prompt = game.winnerSeats.length === 1
       ? `${playerName(game.winnerSeats[0])} wins with ${low} strokes.`
       : `${game.winnerSeats.map(playerName).join(' and ')} tie with ${low} strokes.`;
-    const playedAt = new Date().toISOString();
-    scoreHistory.push(...game.totals.map((score, seat) => ({ name: playerName(seat), score, bot: game.bot[seat], playedAt })));
-    scoreHistory = scoreHistory.slice(-1000);
-    saveScoreHistory();
   } else {
     game.phase = 'holeEnd';
     game.prompt = `Hole ${game.hole} complete. Review the scorecard.`;
@@ -444,8 +409,7 @@ function publicState(seat) {
     seats: PLAYER_NAMES.map((name, player) => ({ seat: player, name: playerName(player), connected: game.live[player], bot: game.bot[player] })),
     prompt: game.prompt,
     you: seat,
-    canSkip: game.phase === 'playing' && game.turn === seat && game.stage === 'play' && game.drawn?.source === 'stock' && facedownIndexes(seat).length === 1,
-    allTime: { high: allTimeScores('high'), low: allTimeScores('low') }
+    canSkip: game.phase === 'playing' && game.turn === seat && game.stage === 'play' && game.drawn?.source === 'stock' && facedownIndexes(seat).length === 1
   };
 }
 
@@ -500,13 +464,6 @@ async function handleApi(request, response, url) {
       const data = await readBody(request);
       const session = touchSession(data.token);
       if (!session) return json(response, 401, { ok: false, message: 'Choose your player again.' });
-
-      if (data.action === 'resetScores') {
-        scoreHistory = [];
-        saveScoreHistory();
-        game.prompt = `${session.name} cleared the all-time score board.`;
-        return json(response, 200, { ok: true, state: publicState(session.seat) });
-      }
 
       let ok = false;
       if (data.action === 'rename') {

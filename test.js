@@ -1,18 +1,6 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-
-const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'play-nine-test-'));
-const historyFile = path.join(temporaryDirectory, 'score-history.json');
-fs.writeFileSync(historyFile, JSON.stringify([
-  { name: 'Daryl', score: -12, bot: false, playedAt: '2026-01-01T00:00:00.000Z' },
-  { name: 'Cristi', score: 18, bot: true, playedAt: '2026-01-02T00:00:00.000Z' },
-  { name: 'Cindy', score: 43, bot: false, playedAt: '2026-01-03T00:00:00.000Z' }
-]));
-process.env.SCORE_HISTORY_FILE = historyFile;
 process.env.BOT_DELAY_MS = '20';
 process.env.PLAYER_TIMEOUT_MS = '3000';
 
@@ -63,9 +51,6 @@ async function run() {
   const joined = await request(baseUrl, '/api/join', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Daryl' })
   });
-  assert.deepEqual(joined.state.allTime.low.map(entry => entry.score), [-12, 18, 43]);
-  assert.equal(joined.state.allTime.high[0].score, 43);
-
   const renamed = await request(baseUrl, '/api/action', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'rename', name: '  Guest   Golfer  ' })
   });
@@ -147,21 +132,12 @@ async function run() {
   assert.equal(completedGame.hole, 9);
   assert.equal(completedGame.holeHistory.length, 9);
   assert.equal(testedFinalPuttSkip, true);
-  assert.equal(completedGame.allTime.low.length, 5);
-  assert.equal(completedGame.allTime.low.some(entry => entry.bot), true);
-
-  const reset = await request(baseUrl, '/api/action', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'resetScores' })
-  });
-  assert.deepEqual(reset.state.allTime, { high: [], low: [] });
-  assert.deepEqual(JSON.parse(fs.readFileSync(historyFile, 'utf8')), []);
 }
 
 run()
   .then(() => console.log('Play Nine tests passed.'))
   .finally(() => {
     game.server.close();
-    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   })
   .catch(error => {
     console.error(error);
