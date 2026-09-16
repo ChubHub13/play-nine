@@ -42,6 +42,8 @@ async function run() {
   estimatedHand[6].faceUp = false;
   estimatedHand[7].faceUp = false;
   assert.equal(game.estimatedBoardScore(estimatedHand), 25, 'Each facedown card should be estimated at five points.');
+  const pairOpportunity = board([7, 1, 2, 3, 12, 4, 5, 6]);
+  assert.equal(game.bestReplacementForBoard(pairOpportunity, 7).index, 4, 'High-level bots should complete a matching column.');
 
   await new Promise((resolve, reject) => {
     game.server.once('error', reject);
@@ -49,8 +51,13 @@ async function run() {
   });
   const baseUrl = `http://127.0.0.1:${game.server.address().port}`;
   const joined = await request(baseUrl, '/api/join', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Daryl' })
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Daryl', botLevel: 'high' })
   });
+  assert.equal(joined.state.botLevel, 'high');
+  const difficulty = await request(baseUrl, '/api/action', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'setBotLevel', level: 'medium' })
+  });
+  assert.equal(difficulty.state.botLevel, 'medium');
   const renamed = await request(baseUrl, '/api/action', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'rename', name: '  Guest   Golfer  ' })
   });
@@ -76,6 +83,14 @@ async function run() {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'draw', source: 'stock' })
   });
   assert.equal(state.state.stage, 'play');
+  state = await request(baseUrl, '/api/action', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'switchDraw', source: 'discard' })
+  });
+  assert.equal(state.state.drawn.source, 'discard', 'A live player can change from the draw pile to the discard before playing.');
+  state = await request(baseUrl, '/api/action', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'switchDraw', source: 'stock' })
+  });
+  assert.equal(state.state.drawn.source, 'stock', 'A live player can change back to the draw pile before playing.');
   state = await request(baseUrl, '/api/action', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'replace', index: 0 })
   });

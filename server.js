@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 
 const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || '0.0.0.0';
-const VERSION = '1.5.0';
+const VERSION = '1.6.0';
 const PLAYER_NAMES = ['Daryl', 'Cristi', 'Cindy'];
 const PLAYER_TIMEOUT_MS = Math.max(3000, Number(process.env.PLAYER_TIMEOUT_MS || 12000));
 const BOT_DELAY_MS = Math.max(20, Number(process.env.BOT_DELAY_MS || 650));
@@ -87,8 +87,13 @@ const game = {
   lastSeen: [0, 0, 0],
   seatNames: [...PLAYER_NAMES],
   botSkips: [0, 0, 0],
+  botLevel: 'medium',
   prompt: 'Choose Daryl, Cristi, or Cindy to begin.'
 };
+
+function cleanBotLevel(value) {
+  return ['low', 'medium', 'high'].includes(value) ? value : 'medium';
+}
 
 function playerName(seat) {
   return game.seatNames[seat] || PLAYER_NAMES[seat];
@@ -202,6 +207,22 @@ function drawCard(seat, source) {
   game.prompt = source === 'discard'
     ? `${playerName(seat)} must replace one card with the discard.`
     : `${playerName(seat)} can replace a card, or discard and flip.`;
+  return true;
+}
+
+function switchDraw(seat, source) {
+  if (game.phase !== 'playing' || game.turn !== seat || game.stage !== 'play' || !game.drawn || game.drawn.source === source) return false;
+  if (source === 'discard') {
+    if (!game.discard.length) return false;
+    game.stock.push(game.drawn.card);
+    game.drawn = { card: game.discard.pop(), source: 'discard' };
+    game.prompt = `${playerName(seat)} switched to the discard and must replace one card.`;
+  } else {
+    if (!ensureStock()) return false;
+    game.discard.push(game.drawn.card);
+    game.drawn = { card: game.stock.pop(), source: 'stock' };
+    game.prompt = `${playerName(seat)} switched to the draw pile and can replace, or discard and flip.`;
+  }
   return true;
 }
 
@@ -322,6 +343,22 @@ function botShouldGoOut(boards, seat) {
   return botEstimate < 5 || boards.every((board, player) => player === seat || estimatedBoardScore(board) >= botEstimate + 12);
 }
 
+function bestReplacementForBoard(board, value) {
+  const currentScore = estimatedBoardScore(board);
+  let best = null;
+  for (let index = 0; index < board.length; index++) {
+    const candidate = board.map((slot, slotIndex) => slotIndex === index
+      ? { card: { id: 'candidate', value }, faceUp: true }
+      : { card: slot.card, faceUp: slot.faceUp });
+    const score = estimatedBoardScore(candidate);
+    const hidden = !board[index].faceUp;
+    if (!best || score < best.score || (score === best.score && hidden && !best.hidden)) {
+      best = { index, score, improvement: currentScore - score, hidden };
+    }
+  }
+  return best;
+}
+
 function replacementTarget(seat, value, allowVisible = false) {
   const pair = pairTarget(seat, value);
   if (pair !== null) return pair;
@@ -334,8 +371,18 @@ function replacementTarget(seat, value, allowVisible = false) {
 function botDraw(seat) {
   if (game.phase !== 'playing' || game.turn !== seat || !game.bot[seat] || game.stage !== 'draw') return;
   const discard = game.discard.at(-1);
-  const discardTarget = discard ? replacementTarget(seat, discard.value, botIsLate(seat)) : null;
-  drawCard(seat, discardTarget !== null ? 'discard' : 'stock');
+  let takeDiscard = false;
+  if (discard) {
+    if (game.botLevel === 'low') {
+      takeDiscard = discard.value <= 1 && crypto.randomInt(100) < 45;
+    } else if (game.botLevel === 'high') {
+      const best = bestReplacementForBoard(game.boards[seat], discard.value);
+      takeDiscard = pairTarget(seat, discard.value) !== null || best.improvement >= 2;
+    } else {
+      takeDiscard = replacementTarget(seat, discard.value, botIsLate(seat)) !== null;
+    }
+  }
+  drawCard(seat, takeDiscard ? 'discard' : 'stock');
   botTimer = setTimeout(() => botPlay(seat), Math.max(20, BOT_DELAY_MS * 0.65));
   botTimer.unref?.();
 }
@@ -343,10 +390,31 @@ function botDraw(seat) {
 function botPlay(seat) {
   if (game.phase !== 'playing' || game.turn !== seat || !game.bot[seat] || game.stage !== 'play' || !game.drawn) return;
   const hidden = facedownIndexes(seat);
+  if (game.botLevel === 'low') {
+    const pair = pairTarget(seat, game.drawn.card.value);
+    if (pair !== null && crypto.randomInt(100) < 40) return replaceCard(seat, pair);
+    if (game.drawn.source === 'stock' && hidden.length && (game.drawn.card.value > 2 || crypto.randomInt(100) < 60)) {
+      return discardAndFlip(seat, hidden[crypto.randomInt(hidden.length)]);
+    }
+    const choices = hidden.length ? hidden : game.boards[seat].map((slot, index) => index);
+    return replaceCard(seat, choices[crypto.randomInt(choices.length)]);
+  }
   if (game.drawn.source === 'stock' && hidden.length === 1 && botShouldGoOut(game.boards, seat)) {
     game.botSkips[seat] = 0;
     discardAndFlip(seat, hidden[0]);
     return;
+  }
+  if (game.botLevel === 'high') {
+    const best = bestReplacementForBoard(game.boards[seat], game.drawn.card.value);
+    if (best && best.improvement > 0) {
+      game.botSkips[seat] = 0;
+      return replaceCard(seat, best.index);
+    }
+    if (game.drawn.source === 'stock' && hidden.length) {
+      game.botSkips[seat] = 0;
+      return discardAndFlip(seat, hidden[crypto.randomInt(hidden.length)]);
+    }
+    return replaceCard(seat, best?.index ?? 0);
   }
   const target = replacementTarget(seat, game.drawn.card.value, botIsLate(seat));
   if (target !== null) {
@@ -406,6 +474,7 @@ function publicState(seat) {
     holeHistory: game.holeHistory,
     lastHole: game.lastHole,
     winnerSeats: game.winnerSeats,
+    botLevel: game.botLevel,
     seats: PLAYER_NAMES.map((name, player) => ({ seat: player, name: playerName(player), connected: game.live[player], bot: game.bot[player] })),
     prompt: game.prompt,
     you: seat,
@@ -446,6 +515,7 @@ async function handleApi(request, response, url) {
       game.bot[seat] = false;
       game.lastSeen[seat] = Date.now();
       game.seatNames[seat] = name;
+      game.botLevel = cleanBotLevel(data.botLevel);
       return json(response, 200, { ok: true, token, seat, name, state: publicState(seat) });
     }
 
@@ -472,10 +542,14 @@ async function handleApi(request, response, url) {
         session.name = name;
         game.seatNames[session.seat] = name;
         ok = true;
+      } else if (data.action === 'setBotLevel') {
+        game.botLevel = cleanBotLevel(data.level);
+        ok = true;
       } else if (data.action === 'start' || data.action === 'newGame') ok = startGame();
       else if (data.action === 'nextHole' && game.phase === 'holeEnd') ok = dealHole();
       else if (data.action === 'teeOff') ok = flipTeeOff(session.seat, Number(data.index));
       else if (data.action === 'draw') ok = drawCard(session.seat, data.source === 'discard' ? 'discard' : 'stock');
+      else if (data.action === 'switchDraw') ok = switchDraw(session.seat, data.source === 'discard' ? 'discard' : 'stock');
       else if (data.action === 'replace') ok = replaceCard(session.seat, Number(data.index));
       else if (data.action === 'discardFlip') ok = discardAndFlip(session.seat, Number(data.index));
       else if (data.action === 'skip') ok = skipFinalPutt(session.seat);
@@ -537,4 +611,4 @@ if (require.main === module) {
   server.listen(PORT, HOST, () => console.log(`Play Nine v${VERSION} running at http://${HOST}:${PORT}`));
 }
 
-module.exports = { buildDeck, scoreBoard, visibleBoardScore, estimatedBoardScore, botShouldGoOut, server };
+module.exports = { buildDeck, scoreBoard, visibleBoardScore, estimatedBoardScore, bestReplacementForBoard, botShouldGoOut, server };
