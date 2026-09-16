@@ -211,18 +211,11 @@ function drawCard(seat, source) {
 }
 
 function switchDraw(seat, source) {
-  if (game.phase !== 'playing' || game.turn !== seat || game.stage !== 'play' || !game.drawn || game.drawn.source === source) return false;
-  if (source === 'discard') {
-    if (!game.discard.length) return false;
-    game.stock.push(game.drawn.card);
-    game.drawn = { card: game.discard.pop(), source: 'discard' };
-    game.prompt = `${playerName(seat)} switched to the discard and must replace one card.`;
-  } else {
-    if (!ensureStock()) return false;
-    game.discard.push(game.drawn.card);
-    game.drawn = { card: game.stock.pop(), source: 'stock' };
-    game.prompt = `${playerName(seat)} switched to the draw pile and can replace, or discard and flip.`;
-  }
+  if (game.phase !== 'playing' || game.turn !== seat || game.stage !== 'play' || game.drawn?.source !== 'discard' || source !== 'stock') return false;
+  if (!ensureStock()) return false;
+  game.discard.push(game.drawn.card);
+  game.drawn = { card: game.stock.pop(), source: 'stock' };
+  game.prompt = `${playerName(seat)} switched to the draw pile and can replace, or discard and flip.`;
   return true;
 }
 

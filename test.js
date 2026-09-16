@@ -80,17 +80,14 @@ async function run() {
   assert.equal(state.state.turn, 0, 'An inactive live player turn must remain paused.');
   assert.equal(state.state.boards[0].filter(slot => slot.faceUp).length, 2, 'The server must not play an inactive live player\'s cards.');
   state = await request(baseUrl, '/api/action', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'draw', source: 'stock' })
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'draw', source: 'discard' })
   });
   assert.equal(state.state.stage, 'play');
-  state = await request(baseUrl, '/api/action', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'switchDraw', source: 'discard' })
-  });
-  assert.equal(state.state.drawn.source, 'discard', 'A live player can change from the draw pile to the discard before playing.');
+  assert.equal(state.state.drawn.source, 'discard');
   state = await request(baseUrl, '/api/action', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'switchDraw', source: 'stock' })
   });
-  assert.equal(state.state.drawn.source, 'stock', 'A live player can change back to the draw pile before playing.');
+  assert.equal(state.state.drawn.source, 'stock', 'A live player can change from the discard to the draw pile before playing.');
   state = await request(baseUrl, '/api/action', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: joined.token, action: 'replace', index: 0 })
   });
