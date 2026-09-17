@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 
 const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || '0.0.0.0';
-const VERSION = '1.6.0';
+const VERSION = '1.6.1';
 const PLAYER_NAMES = ['Daryl', 'Cristi', 'Cindy'];
 const PLAYER_TIMEOUT_MS = Math.max(3000, Number(process.env.PLAYER_TIMEOUT_MS || 12000));
 const BOT_DELAY_MS = Math.max(20, Number(process.env.BOT_DELAY_MS || 650));
@@ -62,6 +62,19 @@ function scoreBoard(board) {
   }
   score += bonus;
   return { score, bonus, matchedColumns };
+}
+
+function countMinusTenAwards(board) {
+  const matchedByValue = new Map();
+  for (let column = 0; column < 4; column++) {
+    const top = board[column];
+    const bottom = board[column + 4];
+    if (!top || !bottom || top.card.value !== bottom.card.value) continue;
+    matchedByValue.set(top.card.value, (matchedByValue.get(top.card.value) || 0) + 1);
+  }
+  let awards = 0;
+  for (const count of matchedByValue.values()) awards += Math.floor(count / 2);
+  return awards;
 }
 
 const game = {
@@ -257,6 +270,7 @@ function completeTurn(seat) {
     game.turn = game.finalTurns[0];
     game.prompt = `${playerName(seat)} putts out. Everyone else gets one last shot.`;
   } else if (game.closer !== null) {
+    for (const slot of game.boards[seat]) slot.faceUp = true;
     game.finalTurns = game.finalTurns.filter(player => player !== seat);
     if (!game.finalTurns.length) return scoreHole();
     game.turn = game.finalTurns[0];
@@ -271,7 +285,13 @@ function completeTurn(seat) {
 function scoreHole() {
   clearTimeout(botTimer);
   for (const board of game.boards) for (const slot of board) slot.faceUp = true;
-  const results = game.boards.map((board, seat) => ({ seat, name: playerName(seat), ...scoreBoard(board) }));
+  const results = game.boards.map((board, seat) => ({
+    seat,
+    name: playerName(seat),
+    ...scoreBoard(board),
+    minusFivePlayed: board.filter(slot => slot.card.value === -5).length,
+    minusTenEarned: countMinusTenAwards(board)
+  }));
   for (const result of results) game.totals[result.seat] += result.score;
   game.lastHole = { hole: game.hole, closer: game.closer, results, totals: game.totals.slice() };
   game.holeHistory.push(game.lastHole);
@@ -604,4 +624,4 @@ if (require.main === module) {
   server.listen(PORT, HOST, () => console.log(`Play Nine v${VERSION} running at http://${HOST}:${PORT}`));
 }
 
-module.exports = { buildDeck, scoreBoard, visibleBoardScore, estimatedBoardScore, bestReplacementForBoard, botShouldGoOut, server };
+module.exports = { buildDeck, scoreBoard, countMinusTenAwards, visibleBoardScore, estimatedBoardScore, bestReplacementForBoard, botShouldGoOut, server };

@@ -27,6 +27,9 @@ async function run() {
   assert.equal(game.scoreBoard(board([7, 7, 1, 2, 7, 7, 3, 4])).score, 0, 'Two equal pair-columns cancel and earn -10.');
   assert.equal(game.scoreBoard(board([11, 11, 11, 0, 11, 11, 11, 12])).score, -3, 'Three equal pair-columns earn -15.');
   assert.equal(game.scoreBoard(board([3, 3, 3, 3, 3, 3, 3, 3])).score, -20, 'Four equal pair-columns earn -20.');
+  assert.equal(game.countMinusTenAwards(board([6, 7, 8, 9, 6, 0, 8, 12])), 0, 'Different matched numbers do not earn a -10 award.');
+  assert.equal(game.countMinusTenAwards(board([7, 7, 1, 2, 7, 7, 3, 4])), 1, 'Two matched columns of the same number earn one -10 award.');
+  assert.equal(game.countMinusTenAwards(board([3, 3, 3, 3, 3, 3, 3, 3])), 2, 'Four matching columns count as two -10 awards.');
   assert.equal(game.scoreBoard(board([-5, 1, 2, 3, -5, 4, 5, 6])).score, 11, 'A Hole-in-One pair retains both -5 values.');
   assert.equal(game.scoreBoard(board([-5, -5, 2, 3, -5, -5, 5, 6])).score, -14, 'Four Hole-in-One cards total -30 before other cards.');
   const leadingBot = board([0, 1, 2, 3, 4, 5, 6, 7]);
@@ -95,8 +98,16 @@ async function run() {
 
   let completedGame = null;
   let testedFinalPuttSkip = false;
+  let testedImmediateFinalReveal = false;
   for (let step = 0; step < 3000; step++) {
     const snapshot = (await request(baseUrl, `/api/state?token=${encodeURIComponent(joined.token)}`)).state;
+    if (snapshot.phase === 'playing' && snapshot.closer !== null) {
+      for (let seat = 0; seat < 3; seat++) {
+        if (seat === snapshot.closer || snapshot.finalTurns.includes(seat)) continue;
+        assert.equal(snapshot.boards[seat].every(slot => slot.faceUp), true, 'A player\'s remaining cards reveal immediately after their final turn.');
+        testedImmediateFinalReveal = true;
+      }
+    }
     if (snapshot.phase === 'gameover') {
       completedGame = snapshot;
       break;
@@ -144,6 +155,8 @@ async function run() {
   assert.equal(completedGame.hole, 9);
   assert.equal(completedGame.holeHistory.length, 9);
   assert.equal(testedFinalPuttSkip, true);
+  assert.equal(testedImmediateFinalReveal, true);
+  assert.equal(completedGame.holeHistory.every(hole => hole.results.every(result => Number.isInteger(result.minusFivePlayed) && Number.isInteger(result.minusTenEarned))), true);
 }
 
 run()
