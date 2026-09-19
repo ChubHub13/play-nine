@@ -143,7 +143,7 @@ async function run() {
         });
         if (action.action === 'skip') {
           testedFinalPuttSkip = true;
-          if (played.state.phase === 'playing') assert.equal(played.state.boards[0].filter(slot => !slot.faceUp).length, 1);
+          if (played.state.phase === 'playing') assert.equal(played.state.boards[0].filter(slot => !slot.faceUp).length, played.state.closer === null ? 1 : 0);
           else assert.ok(['holeEnd', 'gameover'].includes(played.state.phase), 'A final-turn stand may immediately score the hole.');
         }
       }
